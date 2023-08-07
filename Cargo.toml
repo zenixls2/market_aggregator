@@ -11,6 +11,7 @@ actix-codec = "0.5.1"
 actix-web = "4.3.1"
 anyhow = "1.0.72"
 awc = { version = "3.1.1", features = ["rustls"] }
+bigdecimal = "0.4.1"
 fern = "0.6.2"
 formatx = "0.2.1"
 futures-util = "0.3.28"

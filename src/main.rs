@@ -1,7 +1,9 @@
 mod apitree;
+mod orderbook;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use log::info;
+use orderbook::Orderbook;
 use serde_json::json;
 use std::string::String;
 use std::vec::Vec;
@@ -58,6 +60,24 @@ impl Exchange {
                 .map_err(|e| anyhow!("{:?}", e))
         } else {
             Err(anyhow!("Not connect yet. Please run connect first."))
+        }
+    }
+    pub async fn next(&mut self) -> Result<Option<Orderbook>> {
+        if let Some(msg) = self
+            .connection
+            .as_mut()
+            .ok_or_else(|| anyhow!("Not connect yet. Please run connect first"))?
+            .next()
+            .await
+        {
+            let raw = format!("{:?}", msg?);
+            let parsed = (apitree::WS_APIMAP
+                .get(&self.name)
+                .ok_or_else(|| anyhow!("Exchange not supported"))?
+                .parse)(raw)?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
         }
     }
 }
