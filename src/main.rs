@@ -1,7 +1,8 @@
 mod apitree;
 mod orderbook;
+use actix_http::ws::Item;
 use anyhow::{anyhow, Result};
-use awc::ws::Frame::Text;
+use awc::ws::Frame::*;
 use futures_util::{pin_mut, select, FutureExt, SinkExt, StreamExt};
 use log::info;
 use orderbook::Orderbook;
@@ -15,6 +16,7 @@ pub struct Exchange {
     client: awc::Client,
     level: u32,
     connection: Option<actix_codec::Framed<awc::BoxedSocket, awc::ws::Codec>>,
+    cache: Vec<Item>,
 }
 
 impl Exchange {
@@ -29,6 +31,7 @@ impl Exchange {
             pairs: vec![],
             level: 20,
             connection: None,
+            cache: vec![],
         }
     }
 
@@ -71,16 +74,28 @@ impl Exchange {
             .next()
             .await
         {
-            if let Text(msg) = result? {
-                let raw = std::str::from_utf8(&msg)?;
-                let parsed = (apitree::WS_APIMAP
-                    .get(&self.name)
-                    .ok_or_else(|| anyhow!("Exchange not supported"))?
-                    .parse)(raw.to_string())?;
-                return Ok(Some(parsed));
-            }
+            let raw = match result? {
+                Text(msg) => std::str::from_utf8(&msg)?.to_string(),
+                Binary(msg) => std::str::from_utf8(&msg)?.to_string(),
+                Continuation(item) => {
+                    // TODO: handle state
+                    self.cache.push(item);
+                    return Ok(None);
+                }
+                Ping(_) => return Ok(None),
+                Pong(_) => return Ok(None),
+                Close(_) => return Err(anyhow!("close")),
+            };
+
+            info!("{}", raw);
+            let parsed = (apitree::WS_APIMAP
+                .get(&self.name)
+                .ok_or_else(|| anyhow!("Exchange not supported"))?
+                .parse)(raw)?;
+            Ok(Some(parsed))
+        } else {
+            Ok(None)
         }
-        Ok(None)
     }
 }
 
