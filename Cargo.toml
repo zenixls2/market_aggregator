@@ -17,6 +17,6 @@ formatx = "0.2.1"
 futures-util = "0.3.28"
 log = "0.4.19"
 phf = { version = "0.11.2", features = ["macros"] }
-serde = "1.0.181"
+serde = { version = "1.0.181", features = ["std", "serde_derive", "derive"] }
 serde_json = "1.0.104"
 tokio = { version = "1.29.1", features = ["rt", "macros", "rt-multi-thread"] }

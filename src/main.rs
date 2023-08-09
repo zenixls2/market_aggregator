@@ -1,7 +1,8 @@
 mod apitree;
 mod orderbook;
 use anyhow::{anyhow, Result};
-use futures_util::{SinkExt, StreamExt};
+use awc::ws::Frame::Text;
+use futures_util::{pin_mut, select, FutureExt, SinkExt, StreamExt};
 use log::info;
 use orderbook::Orderbook;
 use serde_json::json;
@@ -63,22 +64,23 @@ impl Exchange {
         }
     }
     pub async fn next(&mut self) -> Result<Option<Orderbook>> {
-        if let Some(msg) = self
+        if let Some(result) = self
             .connection
             .as_mut()
             .ok_or_else(|| anyhow!("Not connect yet. Please run connect first"))?
             .next()
             .await
         {
-            let raw = format!("{:?}", msg?);
-            let parsed = (apitree::WS_APIMAP
-                .get(&self.name)
-                .ok_or_else(|| anyhow!("Exchange not supported"))?
-                .parse)(raw)?;
-            Ok(Some(parsed))
-        } else {
-            Ok(None)
+            if let Text(msg) = result? {
+                let raw = std::str::from_utf8(&msg)?;
+                let parsed = (apitree::WS_APIMAP
+                    .get(&self.name)
+                    .ok_or_else(|| anyhow!("Exchange not supported"))?
+                    .parse)(raw.to_string())?;
+                return Ok(Some(parsed));
+            }
         }
+        Ok(None)
     }
 }
 
@@ -99,6 +101,25 @@ async fn main() -> Result<()> {
     let mut bitstamp = Exchange::new("bitstamp");
     binance.connect().await?;
     binance.subscribe("btcusdt").await?;
+    bitstamp.connect().await?;
+    bitstamp.subscribe("btcusd").await?;
+    /*loop {
+        let b1 = binance.next().fuse();
+        let b2 = bitstamp.next().fuse();
+        pin_mut!(b1, b2);
+        let result = select! {
+            x = b1 => ("binance", x),
+            x = b2 => ("bitstamp", x),
+        };
+        if let Some(ob) = result.1? {
+            info!("{} {:?}", result.0, ob);
+        }
+    }*/
+    while true {
+        if let Some(e) = bitstamp.next().await? {
+            info!("bitstamp: {:?}", e);
+        }
+    }
 
     Ok(())
 }
