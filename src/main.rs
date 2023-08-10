@@ -1,12 +1,11 @@
 mod apitree;
 mod orderbook;
-use actix_http::ws::Item;
+use actix_http::ws::Item::*;
 use anyhow::{anyhow, Result};
 use awc::ws::Frame::*;
 use futures_util::{pin_mut, select, FutureExt, SinkExt, StreamExt};
 use log::info;
-use orderbook::Orderbook;
-use serde_json::json;
+use orderbook::{AggregatedOrderbook, Orderbook};
 use std::string::String;
 use std::vec::Vec;
 
@@ -16,7 +15,7 @@ pub struct Exchange {
     client: awc::Client,
     level: u32,
     connection: Option<actix_codec::Framed<awc::BoxedSocket, awc::ws::Codec>>,
-    cache: Vec<Item>,
+    cache: String,
 }
 
 impl Exchange {
@@ -31,7 +30,7 @@ impl Exchange {
             pairs: vec![],
             level: 20,
             connection: None,
-            cache: vec![],
+            cache: "".to_string(),
         }
     }
 
@@ -52,6 +51,7 @@ impl Exchange {
     }
 
     pub async fn subscribe(&mut self, pair: &str) -> Result<()> {
+        self.pairs.push(pair.to_string());
         if let Some(conn) = &mut self.connection {
             let request = apitree::WS_APIMAP
                 .get(&self.name)
@@ -77,21 +77,26 @@ impl Exchange {
             let raw = match result? {
                 Text(msg) => std::str::from_utf8(&msg)?.to_string(),
                 Binary(msg) => std::str::from_utf8(&msg)?.to_string(),
-                Continuation(item) => {
-                    // TODO: handle state
-                    self.cache.push(item);
-                    return Ok(None);
-                }
-                Ping(_) => return Ok(None),
-                Pong(_) => return Ok(None),
+                Continuation(item) => match item {
+                    FirstText(b) | FirstBinary(b) | Continue(b) => {
+                        self.cache += std::str::from_utf8(&b)?;
+                        return Ok(None);
+                    }
+                    Last(b) => {
+                        let output = self.cache.clone() + std::str::from_utf8(&b)?;
+                        self.cache = "".to_string();
+                        output
+                    }
+                },
+                Ping(_) | Pong(_) => return Ok(None),
                 Close(_) => return Err(anyhow!("close")),
             };
 
-            info!("{}", raw);
-            let parsed = (apitree::WS_APIMAP
+            let mut parsed = (apitree::WS_APIMAP
                 .get(&self.name)
                 .ok_or_else(|| anyhow!("Exchange not supported"))?
                 .parse)(raw)?;
+            parsed.trim(self.level);
             Ok(Some(parsed))
         } else {
             Ok(None)
@@ -118,23 +123,31 @@ async fn main() -> Result<()> {
     binance.subscribe("btcusdt").await?;
     bitstamp.connect().await?;
     bitstamp.subscribe("btcusd").await?;
-    /*loop {
+    let mut binance_cache: Option<Orderbook> = None;
+    let mut bitstamp_cache: Option<Orderbook> = None;
+    loop {
         let b1 = binance.next().fuse();
         let b2 = bitstamp.next().fuse();
         pin_mut!(b1, b2);
-        let result = select! {
-            x = b1 => ("binance", x),
-            x = b2 => ("bitstamp", x),
+        select! {
+            x = b1 => {
+                if let Some(orderbook) = x? {
+                    let mut agg = AggregatedOrderbook::new();
+                    binance_cache.replace(orderbook);
+                    if let Some(o) = bitstamp_cache.as_ref() { agg.merge(o); }
+                    if let Some(o) = binance_cache.as_ref() { agg.merge(o); }
+                    info!("{:?}", agg);
+                }
+            },
+            x = b2 => {
+                if let Some(orderbook) = x? {
+                    let mut agg = AggregatedOrderbook::new();
+                    bitstamp_cache.replace(orderbook);
+                    if let Some(o) = binance_cache.as_ref() { agg.merge(o); }
+                    if let Some(o) = bitstamp_cache.as_ref() { agg.merge(o); }
+                    info!("{:?}", agg);
+                }
+            },
         };
-        if let Some(ob) = result.1? {
-            info!("{} {:?}", result.0, ob);
-        }
-    }*/
-    while true {
-        if let Some(e) = bitstamp.next().await? {
-            info!("bitstamp: {:?}", e);
-        }
     }
-
-    Ok(())
 }

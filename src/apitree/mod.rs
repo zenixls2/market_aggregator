@@ -2,11 +2,9 @@ use crate::orderbook::{Orderbook, Side};
 use anyhow::{anyhow, Result};
 use bigdecimal::BigDecimal;
 use formatx::formatx;
-use log::info;
 use phf::phf_map;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::str::FromStr;
 
 type ParseFunc = fn(String) -> Result<Orderbook>;
@@ -27,24 +25,20 @@ impl Api {
 }
 
 fn binance_parser(raw: String) -> Result<Orderbook> {
-    #[derive(Deserialize, Debug)]
+    #[derive(Default, Deserialize, Debug)]
+    #[serde(rename_all = "camelCase", default)]
     struct PartialBookDepth {
-        #[serde(default)]
-        lastUpdateId: u64,
-        #[serde(default)]
+        last_update_id: u64,
         bids: Vec<[String; 2]>,
-        #[serde(default)]
         asks: Vec<[String; 2]>,
-        #[serde(default)]
         result: Value,
-        #[serde(default)]
         id: u64,
     }
     // PartialBookDepth is the only subscription type
     // others should be categorized as error
     let result: PartialBookDepth = serde_json::from_str(&raw).map_err(|e| anyhow!("{:?}", e))?;
     // this is a subscription response
-    if result.lastUpdateId == 0 && result.bids.is_empty() && result.asks.is_empty() {
+    if result.last_update_id == 0 && result.bids.is_empty() && result.asks.is_empty() {
         return Ok(Orderbook::new("binance"));
     }
     if result.result != Value::Null {
@@ -66,13 +60,14 @@ fn binance_parser(raw: String) -> Result<Orderbook> {
 }
 
 fn bitstamp_parser(raw: String) -> Result<Orderbook> {
-    info!("{}", raw);
     #[derive(Deserialize, Debug)]
     struct LiveDetailOrderbook {
         bids: Vec<[String; 2]>,
         asks: Vec<[String; 2]>,
-        timestamp: String,
-        microtimestamp: String,
+        #[serde(rename = "timestamp")]
+        _timestamp: String,
+        #[serde(rename = "microtimestamp")]
+        _microtimestamp: String,
     }
     #[derive(Deserialize, Debug)]
     struct WsEvent {
@@ -85,6 +80,9 @@ fn bitstamp_parser(raw: String) -> Result<Orderbook> {
         // return an empty Orderbook. This might be a response or reconnect request
         // we'll ignore reconnection handling at this moment
         return Ok(Orderbook::new("bitstamp"));
+    }
+    if !result.channel.starts_with("order_book_") {
+        return Err(anyhow!("non-orderbook signal passed it"));
     }
     // LiveDetailOrderbook is the only subscription type
     // others should be categorized as error
