@@ -1,13 +1,19 @@
+#![feature(btree_cursors)]
+
 mod apitree;
 mod orderbook;
+mod proto;
 use actix_http::ws::Item::*;
 use anyhow::{anyhow, Result};
 use awc::ws::Frame::*;
 use futures_util::{pin_mut, select, FutureExt, SinkExt, StreamExt};
-use log::info;
+use log::{error, info};
 use orderbook::{AggregatedOrderbook, Orderbook};
+use proto::{AggServer, OrderbookAggregatorServer, Summary};
 use std::string::String;
 use std::vec::Vec;
+use tokio::sync::mpsc::UnboundedSender;
+use tonic::{transport::Server, Code, Status};
 
 pub struct Exchange {
     name: String,
@@ -114,9 +120,7 @@ fn setup_logger() -> Result<(), fern::InitError> {
     Ok(())
 }
 
-#[actix::main]
-async fn main() -> Result<()> {
-    setup_logger()?;
+async fn setup_marketdata(tx: UnboundedSender<Result<Summary, Status>>) -> Result<()> {
     let mut binance = Exchange::new("binance");
     let mut bitstamp = Exchange::new("bitstamp");
     binance.connect().await?;
@@ -136,6 +140,10 @@ async fn main() -> Result<()> {
                     binance_cache.replace(orderbook);
                     if let Some(o) = bitstamp_cache.as_ref() { agg.merge(o); }
                     if let Some(o) = binance_cache.as_ref() { agg.merge(o); }
+                    let summary = agg.finalize(10).map_err(|e|
+                        Status::new(Code::InvalidArgument, format!("{:?}", e))
+                    );
+                    tx.send(summary).map_err(|e| anyhow!("{:?}", e))?;
                     info!("{:?}", agg);
                 }
             },
@@ -145,9 +153,45 @@ async fn main() -> Result<()> {
                     bitstamp_cache.replace(orderbook);
                     if let Some(o) = binance_cache.as_ref() { agg.merge(o); }
                     if let Some(o) = bitstamp_cache.as_ref() { agg.merge(o); }
+                    let summary = agg.finalize(10).map_err(|e|
+                        Status::new(Code::InvalidArgument, format!("{:?}", e)));
+                    tx.send(summary).map_err(|e| anyhow!("{:?}", e))?;
                     info!("{:?}", agg);
                 }
             },
         };
+    }
+}
+
+#[actix::main]
+async fn main() -> Result<()> {
+    setup_logger()?;
+
+    let addr = "127.0.0.1:50051".parse().map_err(|e| anyhow!("{:?}", e))?;
+    let aggserver = AggServer::new();
+    let tx = aggserver.tx.clone();
+    let handle = tokio::spawn(async move {
+        Server::builder()
+            .add_service(OrderbookAggregatorServer::new(aggserver))
+            .serve(addr)
+            .await
+            .map_err(|e| anyhow!("{}", e))
+            .map(|_| ())
+    });
+    let market_fut = setup_marketdata(tx);
+    let fut_1 = handle.fuse();
+    let fut_2 = market_fut.fuse();
+    pin_mut!(fut_1, fut_2);
+
+    select! {
+        agg_killed = fut_1 => {
+            error!("{:?}", agg_killed);
+            agg_killed?
+
+        }
+        market_result = fut_2 => {
+            error!("{:?}", market_result);
+            market_result
+        }
     }
 }

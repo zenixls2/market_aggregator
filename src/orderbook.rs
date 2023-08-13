@@ -1,5 +1,8 @@
-use bigdecimal::BigDecimal;
+use crate::proto::{Level, Summary};
+use anyhow::{anyhow, Result};
+use bigdecimal::{BigDecimal, ToPrimitive};
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 #[derive(Clone, Copy)]
 pub enum Side {
@@ -76,8 +79,63 @@ impl AggregatedOrderbook {
             ask: BTreeMap::new(),
         }
     }
-    pub fn finalize(&mut self, level: u32) {
+    pub fn finalize(&mut self, level: u32) -> Result<Summary> {
         // TODO: calculate spread, remove redundant levels, and output protobuf item
+        let cursor = self.bid.upper_bound(Bound::Unbounded);
+        let mut counter = 0;
+        let mut bids = vec![];
+        'bid_outer: for _ in 0..level {
+            if let Some((price, v)) = cursor.key_value() {
+                for (exchange, volume) in v.iter() {
+                    counter += 1;
+                    bids.push(Level {
+                        exchange: exchange.clone(),
+                        price: price
+                            .to_f64()
+                            .ok_or_else(|| anyhow!("price conversion error: {:?}", price))?,
+                        amount: volume
+                            .to_f64()
+                            .ok_or_else(|| anyhow!("volume conversion error: {:?}", volume))?,
+                    });
+                    if counter == 10 {
+                        break 'bid_outer;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        let cursor = self.ask.lower_bound(Bound::Unbounded);
+        let mut counter = 0;
+        let mut asks = vec![];
+        'ask_outer: for _ in 0..level {
+            if let Some((price, v)) = cursor.key_value() {
+                for (exchange, volume) in v.iter() {
+                    counter += 1;
+                    asks.push(Level {
+                        exchange: exchange.clone(),
+                        price: price
+                            .to_f64()
+                            .ok_or_else(|| anyhow!("price conversion error: {:?}", price))?,
+                        amount: volume
+                            .to_f64()
+                            .ok_or_else(|| anyhow!("volume conversion error: {:?}", volume))?,
+                    });
+                    if counter == 10 {
+                        break 'ask_outer;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        let best_bid = bids.first();
+        let best_ask = asks.first();
+        let spread = match (best_bid, best_ask) {
+            (Some(v), Some(w)) => (v.price - w.price) / w.price,
+            _ => 0.0,
+        };
+        Ok(Summary { spread, bids, asks })
     }
 }
 
