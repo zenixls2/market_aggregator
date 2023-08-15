@@ -1,11 +1,14 @@
 #![feature(btree_cursors)]
 
 mod apitree;
+mod config;
 mod orderbook;
 mod proto;
 use actix_http::ws::Item::*;
 use anyhow::{anyhow, Result};
 use awc::ws::Frame::*;
+use clap::Parser;
+use config::Config;
 use futures_util::{pin_mut, select, FutureExt, SinkExt, StreamExt};
 use log::{error, info};
 use orderbook::{AggregatedOrderbook, Orderbook};
@@ -110,23 +113,33 @@ impl Exchange {
     }
 }
 
-fn setup_logger() -> Result<(), fern::InitError> {
-    fern::Dispatch::new()
+fn setup_logger(
+    log_file: Option<String>,
+    log_level: config::LogLevel,
+) -> Result<(), fern::InitError> {
+    let tmp = fern::Dispatch::new()
         .format(|out, message, _record| out.finish(format_args!("{}", message)))
-        .level(log::LevelFilter::Debug)
-        .chain(std::io::stdout())
-        .chain(fern::log_file("out.log")?)
-        .apply()?;
+        .level(log_level.to_level_filter())
+        .chain(std::io::stdout());
+    if let Some(path) = log_file {
+        tmp.chain(fern::log_file(path)?).apply()?;
+    } else {
+        tmp.apply()?;
+    }
     Ok(())
 }
 
-async fn setup_marketdata(tx: UnboundedSender<Result<Summary, Status>>) -> Result<()> {
+async fn setup_marketdata(
+    binance_pair: &str,
+    bitstamp_pair: &str,
+    tx: UnboundedSender<Result<Summary, Status>>,
+) -> Result<()> {
     let mut binance = Exchange::new("binance");
     let mut bitstamp = Exchange::new("bitstamp");
     binance.connect().await?;
-    binance.subscribe("btcusdt").await?;
+    binance.subscribe(binance_pair).await?;
     bitstamp.connect().await?;
-    bitstamp.subscribe("btcusd").await?;
+    bitstamp.subscribe(bitstamp_pair).await?;
     let mut binance_cache: Option<Orderbook> = None;
     let mut bitstamp_cache: Option<Orderbook> = None;
     loop {
@@ -165,9 +178,18 @@ async fn setup_marketdata(tx: UnboundedSender<Result<Summary, Status>>) -> Resul
 
 #[actix::main]
 async fn main() -> Result<()> {
-    setup_logger()?;
+    let mut config = Config::parse();
+    println!("loading from {}", config.config_path);
+    config.load()?;
+    setup_logger(config.inner.log_path, config.inner.log_level)?;
 
-    let addr = "127.0.0.1:50051".parse().map_err(|e| anyhow!("{:?}", e))?;
+    let bind_addr = config
+        .inner
+        .bind_addr
+        .unwrap_or_else(|| "0.0.0.0".to_string());
+    let addr = format!("{}:{}", bind_addr, config.inner.server_port)
+        .parse()
+        .map_err(|e| anyhow!("{:?}", e))?;
     let aggserver = AggServer::new();
     let tx = aggserver.tx.clone();
     let handle = tokio::spawn(async move {
@@ -178,7 +200,7 @@ async fn main() -> Result<()> {
             .map_err(|e| anyhow!("{}", e))
             .map(|_| ())
     });
-    let market_fut = setup_marketdata(tx);
+    let market_fut = setup_marketdata(&config.inner.binance_pair, &config.inner.bitstamp_pair, tx);
     let fut_1 = handle.fuse();
     let fut_2 = market_fut.fuse();
     pin_mut!(fut_1, fut_2);

@@ -1,0 +1,7 @@
+binance_pair: "btcusdt"
+bitstamp_pair: "btcusd"
+server_addr: "127.0.0.1"
+server_port: 50051
+log_path: "test.log"
+# Debug, Info, Warning, Error
+log_level: "Debug"

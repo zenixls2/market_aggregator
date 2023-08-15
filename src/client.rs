@@ -1,12 +1,24 @@
+#![allow(dead_code)]
+mod config;
 mod proto;
 use anyhow::{anyhow, Result};
+use clap::Parser;
+use config::Config;
 use futures_util::StreamExt;
 use proto::Empty;
 use proto::OrderbookAggregatorClient;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:50051")
+    let mut config = Config::parse();
+    println!("loading from {}", config.config_path);
+    config.load()?;
+    let server_addr = config
+        .inner
+        .server_addr
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let connect_addr = format!("http://{}:{}", server_addr, config.inner.server_port);
+    let mut client = OrderbookAggregatorClient::connect(connect_addr)
         .await
         .map_err(|e| anyhow!("{:?}", e))?;
     let req = tonic::Request::new(Empty {});

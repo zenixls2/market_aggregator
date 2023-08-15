@@ -11,6 +11,7 @@ use tokio_util::sync::ReusableBoxFuture;
 use std::pin::Pin;
 use tonic::{Code, Request, Response, Status};
 
+// A wrapper on the grpc server api
 #[derive(Debug)]
 pub struct AggServer {
     pub tx: UnboundedSender<Result<Summary, Status>>,

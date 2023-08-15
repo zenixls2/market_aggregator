@@ -48,6 +48,9 @@ impl Orderbook {
     }
 }
 
+// AggregatedOrderbook works like this:
+// new() -> merge(ob1) -> merge(ob2) -> ... -> merge(obN) -> finalize(max_level)
+// max_level here is used to limit the depth of orderbook to reach in this call
 #[derive(Debug)]
 pub struct AggregatedOrderbook {
     pub spread: f64,
@@ -56,6 +59,7 @@ pub struct AggregatedOrderbook {
 }
 
 impl AggregatedOrderbook {
+    // merge the content from one orderbook
     pub fn merge(&mut self, orderbook: &Orderbook) {
         let name = &orderbook.name;
         for (price, volume) in orderbook.bid.iter() {
@@ -79,8 +83,8 @@ impl AggregatedOrderbook {
             ask: BTreeMap::new(),
         }
     }
+    // calculate the spread, output the stored price and volume data to grpc's Summary
     pub fn finalize(&mut self, level: u32) -> Result<Summary> {
-        // TODO: calculate spread, remove redundant levels, and output protobuf item
         let mut cursor = self.bid.upper_bound(Bound::Unbounded);
         let mut counter = 0;
         let mut bids = vec![];
@@ -155,10 +159,11 @@ impl AggregatedOrderbook {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
     #[test]
     fn test_orderbook_trim() {
+        let default_quantity: BigDecimal = BigDecimal::from_str("10").unwrap();
         let mut ob = Orderbook::new("");
-        let default_quantity = BigDecimal::from_str("10").unwrap();
         ob.insert(
             Side::Ask,
             BigDecimal::from_str("1").unwrap(),
@@ -174,5 +179,62 @@ mod tests {
         assert_eq!(ob.ask.len(), 1);
         let one = BigDecimal::from_str("1").unwrap();
         assert_eq!(ob.ask.first_key_value(), Some((&one, &default_quantity)));
+    }
+    #[test]
+    fn test_agg_merge() {
+        let default_quantity: BigDecimal = BigDecimal::from_str("10").unwrap();
+        let mut ob1 = Orderbook::new("A");
+        ob1.insert(
+            Side::Ask,
+            BigDecimal::from_str("1").unwrap(),
+            default_quantity.clone(),
+        );
+        ob1.insert(
+            Side::Ask,
+            BigDecimal::from_str("2").unwrap(),
+            default_quantity.clone(),
+        );
+        let mut ob2 = Orderbook::new("B");
+        ob2.insert(
+            Side::Ask,
+            BigDecimal::from_str("1").unwrap(),
+            default_quantity.clone(),
+        );
+        ob2.insert(
+            Side::Ask,
+            BigDecimal::from_str("3").unwrap(),
+            default_quantity.clone(),
+        );
+        let mut agg = AggregatedOrderbook::new();
+        agg.merge(&ob1);
+        agg.merge(&ob2);
+        let summary = agg.finalize(4).unwrap();
+        assert_eq!(summary.spread, 0.0);
+        assert_eq!(
+            summary.asks,
+            vec![
+                Level {
+                    exchange: "A".to_string(),
+                    price: 1.,
+                    amount: 10.
+                },
+                Level {
+                    exchange: "B".to_string(),
+                    price: 1.,
+                    amount: 10.
+                },
+                Level {
+                    exchange: "A".to_string(),
+                    price: 2.,
+                    amount: 10.
+                },
+                Level {
+                    exchange: "B".to_string(),
+                    price: 3.,
+                    amount: 10.
+                },
+            ]
+        );
+        assert_eq!(summary.bids.len(), 0);
     }
 }
