@@ -37,7 +37,7 @@ impl Exchange {
             name: name.to_string(),
             client,
             pairs: vec![],
-            level: 20,
+            level: 10,
             connection: None,
             cache: "".to_string(),
         }
