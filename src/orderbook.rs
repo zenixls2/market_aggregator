@@ -81,7 +81,7 @@ impl AggregatedOrderbook {
     }
     pub fn finalize(&mut self, level: u32) -> Result<Summary> {
         // TODO: calculate spread, remove redundant levels, and output protobuf item
-        let cursor = self.bid.upper_bound(Bound::Unbounded);
+        let mut cursor = self.bid.upper_bound(Bound::Unbounded);
         let mut counter = 0;
         let mut bids = vec![];
         'bid_outer: for _ in 0..level {
@@ -101,11 +101,18 @@ impl AggregatedOrderbook {
                         break 'bid_outer;
                     }
                 }
+                // notice move_prev is to move to the previous element in tree,
+                // not the order of upper bound or lower bound.
+                if cursor.peek_prev().is_some() {
+                    cursor.move_prev();
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
         }
-        let cursor = self.ask.lower_bound(Bound::Unbounded);
+        let mut cursor = self.ask.lower_bound(Bound::Unbounded);
         let mut counter = 0;
         let mut asks = vec![];
         'ask_outer: for _ in 0..level {
@@ -125,6 +132,11 @@ impl AggregatedOrderbook {
                         break 'ask_outer;
                     }
                 }
+                if cursor.peek_next().is_some() {
+                    cursor.move_next();
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -132,7 +144,7 @@ impl AggregatedOrderbook {
         let best_bid = bids.first();
         let best_ask = asks.first();
         let spread = match (best_bid, best_ask) {
-            (Some(v), Some(w)) => (v.price - w.price) / w.price,
+            (Some(v), Some(w)) => w.price - v.price,
             _ => 0.0,
         };
         Ok(Summary { spread, bids, asks })

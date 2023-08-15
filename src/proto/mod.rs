@@ -1,5 +1,6 @@
 mod orderbook;
 use futures_util::{ready, task::Context, task::Poll, Stream};
+pub use orderbook::orderbook_aggregator_client::*;
 pub use orderbook::orderbook_aggregator_server::*;
 pub use orderbook::{Empty, Level, Summary};
 use tokio::sync::broadcast::{self, error::RecvError};
@@ -39,18 +40,14 @@ impl AggServer {
     }
 }
 
+type SummaryResult = Result<Summary, Status>;
+
 pub struct BroadcastStream {
-    inner: ReusableBoxFuture<
-        'static,
-        (
-            Result<Summary, Status>,
-            broadcast::Receiver<Result<Summary, Status>>,
-        ),
-    >,
+    inner: ReusableBoxFuture<'static, (SummaryResult, broadcast::Receiver<SummaryResult>)>,
 }
 
 async fn make_future(
-    mut rx: broadcast::Receiver<Result<Summary, Status>>,
+    mut rx: broadcast::Receiver<SummaryResult>,
 ) -> (
     Result<Summary, Status>,
     broadcast::Receiver<Result<Summary, Status>>,
@@ -63,7 +60,7 @@ async fn make_future(
 }
 
 impl BroadcastStream {
-    pub fn new(rx: broadcast::Receiver<Result<Summary, Status>>) -> Self {
+    pub fn new(rx: broadcast::Receiver<SummaryResult>) -> Self {
         Self {
             inner: ReusableBoxFuture::new(make_future(rx)),
         }
