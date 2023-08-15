@@ -61,7 +61,7 @@ impl Default for InnerConfig {
 #[command(author, version, about, long_about = None)]
 pub struct Config {
     // the path where the inner config is stored
-    #[arg(short, long, default_value_t = String::from("./config.yaml"))]
+    #[arg(short, long, default_value_t = String::from("./config/config.yaml"))]
     pub config_path: String,
     #[arg(skip)]
     pub inner: InnerConfig,
