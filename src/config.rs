@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Copy, Clone, Eq)]
@@ -23,19 +24,35 @@ impl LogLevel {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_three() -> u64 {
+    3u64
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub struct ExchangeSetting {
+    pub pair: String,
+    #[serde(default = "default_true")]
+    pub ws_api: bool,
+    #[serde(default = "default_three")]
+    pub wait_secs: u64,
+}
+
 // This is the real configuration structure.
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct InnerConfig {
-    // trading pair in binance websocket. ex: btcusdt
-    pub binance_pair: String,
-    // trading pair in bitstamp websocket. ex: btcusd
-    pub bitstamp_pair: String,
+    // trading pair: btcusdt
+    // exchange: binance, bitstamp, independentreserve
+    pub exchange_pair_map: HashMap<String, Vec<ExchangeSetting>>,
     // client only. server address to connect to.
     pub server_addr: Option<String>,
     // server only. address on server to bind.
     pub bind_addr: Option<String>,
     // both the client and the server will refer to this server port setting.
-    pub server_port: u32,
+    pub server_port: u16,
     // output log path. None => the log won't be output to a file.
     pub log_path: Option<String>,
     // output log level. ex: Error, Warning, Info, Debug
@@ -45,8 +62,7 @@ pub struct InnerConfig {
 impl Default for InnerConfig {
     fn default() -> Self {
         Self {
-            binance_pair: "btcusdt".to_string(),
-            bitstamp_pair: "btcusd".to_string(),
+            exchange_pair_map: HashMap::new(),
             server_addr: Some("127.0.0.1".to_string()),
             bind_addr: Some("0.0.0.0".to_string()),
             server_port: 50051,
@@ -60,8 +76,7 @@ impl Default for InnerConfig {
 #[derive(Serialize, Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Config {
-    // the path where the inner config is stored
-    #[arg(short, long, default_value_t = String::from("./config/config.yaml"))]
+    #[arg(short, long, default_value_t=String::from("./config/config.yaml"))]
     pub config_path: String,
     #[arg(skip)]
     pub inner: InnerConfig,
@@ -86,12 +101,29 @@ mod tests {
             inner: InnerConfig::default(),
         };
         let result = config.load();
+        println!("{:?}", result);
         assert!(result.is_ok());
         assert_eq!(
             config.inner,
             InnerConfig {
-                binance_pair: "btcusdt".to_string(),
-                bitstamp_pair: "btcusd".to_string(),
+                exchange_pair_map: HashMap::from([
+                    (
+                        "binance".to_string(),
+                        vec![ExchangeSetting {
+                            pair: "btcusdt".to_string(),
+                            ws_api: false,
+                            wait_secs: 3,
+                        }]
+                    ),
+                    (
+                        "bitstamp".to_string(),
+                        vec![ExchangeSetting {
+                            pair: "btcusd".to_string(),
+                            ws_api: true,
+                            wait_secs: 3,
+                        }]
+                    ),
+                ]),
                 server_addr: Some("127.0.0.1".to_string()),
                 bind_addr: None,
                 server_port: 50051,

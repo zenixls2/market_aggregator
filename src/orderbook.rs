@@ -1,8 +1,9 @@
 use crate::proto::{Level, Summary};
 use anyhow::{anyhow, Result};
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use std::collections::BTreeMap;
 use std::ops::Bound;
+use std::time::SystemTime;
 
 #[derive(Clone, Copy)]
 pub enum Side {
@@ -10,11 +11,21 @@ pub enum Side {
     Ask,
 }
 
-#[derive(Debug, PartialEq)]
+fn get_unixtime() -> u128 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Orderbook {
-    pub(self) name: String,
-    pub(self) bid: BTreeMap<BigDecimal, BigDecimal>,
-    pub(self) ask: BTreeMap<BigDecimal, BigDecimal>,
+    pub(crate) name: String,
+    pub(crate) bid: BTreeMap<BigDecimal, BigDecimal>,
+    pub(crate) ask: BTreeMap<BigDecimal, BigDecimal>,
+    pub(crate) volume: BigDecimal,
+    pub(crate) last_price: BigDecimal,
+    pub(crate) timestamp: u128,
 }
 
 impl Orderbook {
@@ -24,8 +35,18 @@ impl Orderbook {
     }
     pub fn insert(&mut self, side: Side, price: BigDecimal, volume: BigDecimal) {
         match side {
-            Side::Bid => self.bid.insert(price, volume),
-            Side::Ask => self.ask.insert(price, volume),
+            Side::Bid => {
+                self.bid.remove(&price);
+                if !volume.is_zero() {
+                    self.bid.insert(price, volume);
+                }
+            }
+            Side::Ask => {
+                self.ask.remove(&price);
+                if !volume.is_zero() {
+                    self.ask.insert(price, volume);
+                }
+            }
         };
     }
     pub fn new(name: &str) -> Orderbook {
@@ -33,6 +54,9 @@ impl Orderbook {
             name: name.to_string(),
             bid: BTreeMap::new(),
             ask: BTreeMap::new(),
+            timestamp: get_unixtime(),
+            last_price: BigDecimal::zero(),
+            volume: BigDecimal::zero(),
         }
     }
     // used to trim bid/ask to level numbers of price bars
